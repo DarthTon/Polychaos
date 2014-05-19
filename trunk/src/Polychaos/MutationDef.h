@@ -9,9 +9,10 @@ namespace mut
 // Code analyze state
 enum State
 {
-    Empty  = '-',  // empty (no code here, or not processed yet)
-    NextIP = 'N',  // next address to be analyzed
-    Code   = 'C',  // already analyzed, code
+    Empty       = '-',  // empty (no code here, or not processed yet)
+    EntryIP     = 'E',  // entry point
+    NextIP      = 'N',  // next address to be analyzed
+    Code        = 'C',  // already analyzed, code
 };
 
 // Instruction flags
@@ -70,6 +71,18 @@ struct InstructionData
     {
         memset( cmd, 0x00, sizeof(cmd) );
     }
+};
+
+struct FuncData
+{
+    uint32_t section_rva;       // RVA of section containing pointer
+    uint32_t rva;               // RVA of pointer relative to section base, -1 to skip entry during fixup
+    uint32_t ptr;               // Pointer value, relative to code section base
+
+    FuncData( uint32_t sec_, uint32_t rva_, uint32_t ptr_ )
+        : section_rva( sec_ )
+        , rva( rva_ )
+        , ptr( ptr_ ) { }
 };
 
 }
