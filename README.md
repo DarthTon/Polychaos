@@ -12,13 +12,10 @@ Polychaos
 
 - Support for custom mutation implementation
 
-- Fixup relocations, TLS callbacks, exports, SAFESEH pointers
+- Update relocations, TLS callbacks, exports, SAFESEH pointers
 
 ## Limitations ##
 - No data in mutated code section (only code is allowed)
-- No CRT entrypoint
-- No external pointers to functions in code section (e.g. VTables, exception handler unwind tables)
-- No statically linked CRT
 - No .NET stuff
  
 ## License ##
