@@ -4,14 +4,18 @@
 #include <cassert>
 #include <stdexcept>
 #include <string>
+#include <algorithm>
 
 /* |<--SPACE_START--> [code] <--SPACE_BETWEEN--> [code] <--SPACE_END-->| */
 #define SPACE_START     4
 #define SPACE_BETWEEN   16
-#define SPACE_END       4
+#define SPACE_END       128
 
 // try to find new ip NTRY times
 #define NTRY  1000 
+
+//#define NO_MUTATION
+//#define NO_RANDOMIZE
 
 namespace mut
 {
@@ -69,6 +73,7 @@ void MutationEngine::Reset()
 /// <returns>Output buffer size</returns>
 size_t MutationEngine::Mutate( uint8_t* ptr, size_t size, 
                                size_t& rva_ep, size_t extDelta,
+                               const std::list<FuncData>& knownFuncs,
                                size_t extBase, uint8_t*& obuf )
 {
     //
@@ -78,7 +83,14 @@ size_t MutationEngine::Mutate( uint8_t* ptr, size_t size,
 
     _ptr = ptr;
     _size = size;
+    _osize = size * 2;
+
+#ifndef NO_MUTATION
+#ifndef NO_RANDOMIZE
     _osize = size * 5;
+#endif
+#endif
+
     _imap = new uint8_t[size];
     _ibuf = new uint8_t[size];
     _obuf = new uint8_t[_osize];
@@ -89,15 +101,23 @@ size_t MutationEngine::Mutate( uint8_t* ptr, size_t size,
     memset( _obuf, 0xCCCCCCCC, _osize );
 
     memcpy( _ibuf, ptr, size );
-    _imap[rva_ep] = NextIP;
+
+    if (rva_ep != -1)
+        _imap[rva_ep] = EntryIP;
+
+    // Mark known functions
+    for (auto& func : knownFuncs)
+        _imap[func.ptr] = NextIP;
 
     // Prepare code graph
-    Disasm( extBase );
+    Disasm( extBase, rva_ep == -1 );
     Process( );
 
+#ifndef NO_MUTATION
     // Apply mutations
     if (_pImpl)
         _pImpl->Mutate( _root, MutateAll, nullptr );
+#endif
 
     // Assemble
     AssembleAndLink( rva_ep, extDelta, extBase );
@@ -127,19 +147,27 @@ size_t MutationEngine::Mutate( uint8_t* ptr, size_t size,
 /// }
 /// </summary>
 /// <param name="extBase">Image base + code section RVA</param>
-void MutationEngine::Disasm( size_t extBase )
+void MutationEngine::Disasm( size_t extBase, bool noep /*= false*/ )
 {
+    uint32_t ip;
+    bool ep_passed = false;
+
+    // Start form EP
+    auto iter = std::find( _imap, _imap + _size, EntryIP );
+
     for (InstructionData** pEntry = &_root;;)
     {
         // Get next ip to analyze
-        uint32_t ip;
-        for (ip = 0; ip < _size && _imap[ip] != NextIP; ip++);
-        if (_imap[ip] != NextIP)
+        if (ep_passed || noep)
         {
-            for (ip = 0; ip < _size && _imap[ip] != Empty; ip++);
-            if (_imap[ip] != Empty)
+            iter = std::find( _imap, _imap + _size, NextIP );
+            if (iter == _imap + _size)
                 break;
         }
+        else
+            ep_passed = true;
+
+        ip = iter - _imap;
 
         for (;;)
         {
@@ -193,7 +221,11 @@ void MutationEngine::Disasm( size_t extBase )
             {
                 // imm points to old .text section
                 imm = *(uint32_t*)&_ibuf[ip + data.imm_offset];
-                if (imm < extBase || imm > extBase + _size)
+
+                if (imm >= extBase && imm < extBase + _size)
+                    // Mark for analysis
+                    _imap[imm - extBase] = NextIP;            
+                else
                     imm = 0;
             }
 
@@ -203,6 +235,21 @@ void MutationEngine::Disasm( size_t extBase )
                 imm = *(uint32_t*)&_ibuf[ip + data.disp_offset];
                 if (imm < extBase || imm > extBase + _size)
                     imm = 0;
+
+                // Check jumptable
+                if (imm && opcode1 == 0xFF)
+                {
+                    int idx = 0;
+                    for (uint32_t* ptr = (uint32_t*)(_ibuf + imm - extBase);; ptr++, idx++)
+                    {
+                        if (*ptr < extBase || *ptr > extBase + _size)
+                            break;
+
+                        // Mark case
+                        _imap[*ptr - extBase] = NextIP;
+                        _jumpFixups[*ptr - extBase] = DataEntry( imm - extBase + idx * 4, *ptr - extBase );
+                    }
+                }
             }
 
             // in range
@@ -409,7 +456,13 @@ size_t MutationEngine::Process( )
 void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t extBase )
 {
     uint32_t ip = 0;
+    rva_ep = ip = 0;
+
+#ifndef NO_MUTATION
+#ifndef NO_RANDOMIZE
     rva_ep = ip = SPACE_START + Utils::GetRandomInt( 0, _osize - SPACE_START - SPACE_END );
+#endif
+#endif
 
     //
     // Assemble
@@ -421,6 +474,8 @@ void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t ex
             // for nxt-linked entries
             for (auto entry = topentry; entry; entry = entry->nxt)
             {
+#ifndef NO_MUTATION
+#ifndef NO_RANDOMIZE
                 // calculate space available
                 int i;                                  
                 for (i = 0; (i < SPACE_BETWEEN) && (ip + i < _osize - SPACE_END); i++)
@@ -456,7 +511,8 @@ void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t ex
                     *(uint32_t*)&_obuf[ip - 4] = newip - ip;
                     ip = newip;
                 };
-
+#endif // NO_RANDOMIZE
+#endif // NO_MUTATION
                 if (entry->flags & Assembled)
                 {
                     _omap[ip] = 1;
@@ -492,6 +548,36 @@ void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t ex
             }
         }
 
+#ifndef NO_MUTATION
+    // Find free space
+    uint32_t nip;
+    for (nip = _osize - _jumpFixups.size() * sizeof(uint32_t); nip > 0; nip--)
+        if (_omap[nip] == 1)
+            break;
+
+    ip = nip + 1;
+#endif // !NO_MUTATION
+
+
+    // Align address
+    ip = ip % 4 ? (((ip >> 2) + 1) << 2) : ip;
+
+    //
+    // Assemble jumptables
+    //
+    for (auto& entry : _jumpFixups)
+    {
+        auto pData = GetIdataByRVA( entry.first );
+        if (pData)
+        {
+            *(uint32_t*)&_omap[ip] = 0x01010101;
+            *(uint32_t*)&_obuf[ip] = extBase + extDelta + pData->new_rva;
+
+            entry.second.new_rva = ip;
+            ip += sizeof(entry.first);
+        }
+    }
+
     //
     // Link
     //
@@ -517,25 +603,26 @@ void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t ex
         // Have absolute argument pointing to old code section
         else if (entry->flags & AbsRel)
         {
-            auto pData = GetIdataByRVA( (uint32_t)entry->abs_imm - extBase );
+            auto rva = (uint32_t)entry->abs_imm - extBase;
+            auto pData = GetIdataByRVA( rva );
             if (pData)
+            {
                 *(uint32_t*)&entry->ofs[entry->orig_len - 4] = (uint32_t)entry->abs_imm + extDelta - pData->old_rva + pData->new_rva;
+            }
+            // Search jump tables
+            else
+            {
+                auto iter = std::find_if( _jumpFixups.begin(), _jumpFixups.end(), 
+                                          [rva]( const std::pair<uint32_t, DataEntry>& de ) { return rva == de.second.old_rva; } );
+
+                if (iter != _jumpFixups.end())
+                    *(uint32_t*)&entry->ofs[entry->orig_len - 4] = (uint32_t)entry->abs_imm + extDelta - iter->second.old_rva + iter->second.new_rva;
+            }
         }
     }
 
-    //
-    // Redirect old xRefs to new
-    //
-    memset( _ptr, 0x00, _size );
-    for (auto entry = _root; entry; entry = entry->next)
-    {
-        // Is referenced
-        if (entry->flags & xRef)
-        {
-            _ptr[entry->old_rva] = 0xE9;
-            *(uint32_t*)&_ptr[entry->old_rva + 1] = extDelta + entry->new_rva - entry->old_rva - 5;
-        }
-    }
+    // Erase original code
+    memset( _ptr, 0xCC, _size );
 }
 
 /// <summary>

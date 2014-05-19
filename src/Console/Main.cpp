@@ -19,7 +19,7 @@ void usage()
               << "       output_path - resulting file, optional\r\n\r\n";
 }
 
-int main(  )
+int main( )
 {
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW( GetCommandLineW(), &argc );
@@ -33,8 +33,7 @@ int main(  )
     {
         PEMutator mutant( new MutationImpl() );
 
-        auto path = argv[1];
-        auto out = mutant.Mutate( ToANSI( path ), argc > 2 ? ToANSI( argv[2] ) : "" );
+        auto out = mutant.Mutate( ToANSI( argv[1] ), argc > 2 ? ToANSI( argv[2] ) : "" );
 
         std::cout << "Successfully mutated. Result saved in '" << out << "'\r\n";
     }

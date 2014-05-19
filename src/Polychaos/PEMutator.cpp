@@ -28,11 +28,26 @@ std::string PEMutator::Mutate( const std::string& filePath, std::string newPath 
     std::ifstream file( filePath, std::ios::binary | std::ios::in );
     _image.reset( new pe_bliss::pe_base( pe_bliss::pe_factory::create_pe( file ) ) );
 
-    auto& secRef = _image->section_from_rva( _image->get_ep() );
+    size_t ep = _image->get_ep();
+    bool hasEP = (ep != 0);
+    if (!hasEP)
+    {
+        for (auto& sec : _image->get_image_sections())
+        {
+            // Filter data sections
+            if (sec.get_characteristics() & (pe_bliss::pe_win::image_scn_mem_execute))
+            {
+                ep = sec.get_virtual_address();
+                break;
+            }
+        }
+    }
+
+    auto& secRef = _image->section_from_rva( ep );
     auto oldText = secRef;
     auto newText = secRef;
 
-    size_t ep = _image->get_ep() - oldText.get_virtual_address();
+    auto ep_rva = hasEP ? ep - oldText.get_virtual_address() : -1;
     uint8_t* obuf = nullptr;
 
     auto& lastSec = _image->get_image_sections().back();
@@ -41,11 +56,14 @@ std::string PEMutator::Mutate( const std::string& filePath, std::string newPath 
     newText.set_virtual_address( lastSec.get_virtual_address() + 
                                  pe_bliss::pe_utils::align_up( lastSec.get_virtual_size(), _image->get_section_alignment() ) );
 
+    std::list<FuncData> funcs;
+    GetKnownFunctions( oldText, funcs );
+
     // Mutate code section
     auto delta = newText.get_virtual_address() - secRef.get_virtual_address();
     auto sz = _mutator.Mutate( (uint8_t*)secRef.get_raw_data().c_str(),
-                               oldText.get_virtual_size(),
-                               ep, delta,
+                               secRef.get_raw_data().length(),
+                               ep_rva, delta, funcs,
                                _image->get_image_base_32() + oldText.get_virtual_address(),
                                obuf );
 
@@ -55,14 +73,16 @@ std::string PEMutator::Mutate( const std::string& filePath, std::string newPath 
 
     _image->add_section( newText );
     _image->set_base_of_code( newText.get_virtual_address() );
-    _image->set_ep( ep + oldText.get_virtual_address() + delta );
+
+    if (hasEP)
+        _image->set_ep( ep_rva + oldText.get_virtual_address() + delta );
 
     // Perform PE fixups
+    FixKnownFunctions( oldText, newText, funcs );
+    FixSafeSEH( oldText, newText );
     FixExport( oldText, newText );
     FixRelocs( oldText, newText );
-    FixSafeSEH( oldText, newText );
-    FixTLS( oldText, newText );
-
+    
     // Build new name
     if (newPath.empty())
     {
@@ -89,6 +109,153 @@ std::string PEMutator::Mutate( const std::string& filePath, std::string newPath 
 }
 
 /// <summary>
+/// Try to find functions from known pointers and data sections
+/// </summary>
+/// <param name="oldText">original code section</param>
+/// <param name="funcs">Found functions</param>
+/// <returns>Function count</returns>
+size_t PEMutator::GetKnownFunctions( const pe_bliss::section& oldText, std::list<FuncData>& funcs )
+{
+    uint32_t textStart = oldText.get_virtual_address() + _image->get_image_base_32();
+    uint32_t textEnd = textStart + oldText.get_virtual_size();
+
+    //
+    // Parse export
+    //
+    if (_image->has_exports())
+    {
+        pe_bliss::export_info info;
+        auto exports = pe_bliss::get_exported_functions( *_image, info );
+        auto& expSec = _image->section_from_directory( pe_bliss::pe_win::image_directory_entry_export );
+
+        for (auto& exp : exports)
+        {
+            if (exp.is_forwarded())
+                continue;
+
+            // Function inside old .text section
+            if (exp.get_rva() >= oldText.get_virtual_address() && exp.get_rva() <= oldText.get_virtual_address() + oldText.get_virtual_size())
+            {
+                auto rva = exp.get_rva() - oldText.get_virtual_address();
+                funcs.emplace_back( FuncData( expSec.get_virtual_address(), -1, rva ) );
+            }
+        }
+    }
+
+    //
+    // Parse TLS
+    //
+    if (_image->has_tls())
+    {
+        auto tls = pe_bliss::get_tls_info( *_image );
+
+        if (tls.get_callbacks_rva() != 0)
+        {
+            auto& tlsSec = _image->section_from_rva( tls.get_callbacks_rva() );
+            auto pSectionData = _image->section_data_from_rva( tls.get_callbacks_rva() );
+            
+            for (uint32_t* pCallback = (uint32_t*)pSectionData; *pCallback; pCallback++)
+            {
+                auto ptr = *pCallback - _image->get_image_base_32();
+
+                // Callback belongs to old .text section
+                if (ptr >= oldText.get_virtual_address() &&
+                     ptr <= oldText.get_virtual_address() + oldText.get_virtual_size())
+                {
+                    auto rva = (const char*)pCallback - tlsSec.get_raw_data().c_str();
+                    funcs.emplace_back( FuncData( tlsSec.get_virtual_address(), rva,  ptr - oldText.get_virtual_address() ) );
+                }
+            }
+        }
+    }
+
+    //
+    // Parse SAFESEH
+    //
+    if (_image->has_config())
+    {
+        auto& cfgSec = _image->section_from_directory( pe_bliss::pe_win::image_directory_entry_load_config );
+        auto cfg = pe_bliss::get_image_config( *_image );
+        auto& handlers = cfg.get_se_handler_rvas();
+
+        for (size_t i = 0; i < handlers.size(); i++)
+        {
+            // Handler inside old section
+            if (handlers[i] >= oldText.get_virtual_address() &&
+                 handlers[i] <= oldText.get_virtual_address() + oldText.get_virtual_size())
+            {
+                auto rva = handlers[i] - oldText.get_virtual_address();
+
+                // Exclude functions from generic fix
+                funcs.emplace_back( FuncData( cfgSec.get_virtual_address(), -1, rva ) );
+            }
+        }
+    }
+
+    //
+    // Parse sections
+    //
+    
+    // Prepare exclusion regions
+    std::list<std::pair<uint32_t, uint32_t>> rgns;
+    for (auto i = pe_bliss::pe_win::image_directory_entry_export; i <= pe_bliss::pe_win::image_directory_entry_com_descriptor; i++)
+    {
+        auto base = _image->get_directory_rva( i );
+        auto size = _image->get_directory_size( i );
+
+        if (base != 0 && size != 0)
+            rgns.push_back( std::make_pair( base, base + size ) );
+    }
+
+    for (auto& sec : _image->get_image_sections())
+    {
+        // Filter data sections
+        if (sec.get_characteristics() & (pe_bliss::pe_win::image_scn_cnt_initialized_data | pe_bliss::pe_win::image_scn_cnt_uninitialized_data))
+        {
+            uint32_t* start = (uint32_t*)sec.get_raw_data().c_str();
+            uint32_t* end = (uint32_t*)(sec.get_raw_data().c_str() + sec.get_raw_data().length());
+            
+            for (uint32_t* ptr = start; ptr < end - 1; ptr++)
+            {
+                // Exclude some PE metadata regions
+                auto rva = sec.get_virtual_address() + (ptr - start) * sizeof(uint32_t);
+                auto iter = std::find_if( rgns.begin(), rgns.end(),
+                                          [rva]( const std::pair<uint32_t, uint32_t>& val ) { return (rva >= val.first && rva < val.second); } );
+
+                if (iter == rgns.end() && *ptr >= textStart && *ptr < textEnd)
+                    funcs.emplace_back( FuncData( sec.get_virtual_address(), (ptr - start) * sizeof(uint32_t), *ptr - textStart ) );
+            }
+        }
+    }
+
+    return funcs.size();
+}
+
+/// <summary>
+/// Fix function returned by GetKnownFunctions
+/// </summary>
+/// <param name="oldText">Original .text section</param>
+/// <param name="newText">New .text section</param>
+/// <param name="funcs">Function list</param>
+void PEMutator::FixKnownFunctions( const pe_bliss::section& oldText, 
+                                   const pe_bliss::section& newText, 
+                                   const std::list<FuncData>& funcs )
+{
+    for (auto& func : funcs)
+    {
+        // Skip function
+        if (func.rva == -1)
+            continue;
+
+        auto& sec = _image->section_from_rva( func.section_rva );
+        auto pData = _mutator.GetIdataByRVA( func.ptr );
+        if (pData)
+            *(uint32_t*)(sec.get_raw_data().c_str() + func.rva) = _image->get_image_base_32() + newText.get_virtual_address() + pData->new_rva;
+    }
+}
+
+
+/// <summary>
 /// Fix relocations
 /// </summary>
 /// <param name="oldText">Original .text section</param>
@@ -99,7 +266,6 @@ void PEMutator::FixRelocs( const pe_bliss::section& oldText, const pe_bliss::sec
     if (!_image->has_reloc())
         return;
 
-    auto delta = newText.get_virtual_address() - oldText.get_virtual_address();
     auto relocs = pe_bliss::get_relocations( *_image );
     std::vector<std::pair<uint32_t, uint16_t>> tmpRelocs;
 
@@ -125,6 +291,10 @@ void PEMutator::FixRelocs( const pe_bliss::section& oldText, const pe_bliss::sec
         else
             i++;
     }
+
+    // Add jump tables
+    for (auto& entry : _mutator.dataList())
+        tmpRelocs.push_back( std::make_pair( entry.second.new_rva, pe_bliss::pe_win::image_rel_based_highlow ) );
 
     std::sort( tmpRelocs.begin(), tmpRelocs.end() );
 
@@ -158,6 +328,8 @@ void PEMutator::FixExport( const pe_bliss::section& oldText, const pe_bliss::sec
     pe_bliss::export_info info;
     auto delta = newText.get_virtual_address() - oldText.get_virtual_address();
     auto exports = pe_bliss::get_exported_functions( *_image, info );
+    auto ofst = _image->get_directory_rva( pe_bliss::pe_win::image_directory_entry_export )
+              - _image->section_from_directory( pe_bliss::pe_win::image_directory_entry_export ).get_virtual_address();
 
     for (auto& exp : exports)
     {
@@ -165,18 +337,22 @@ void PEMutator::FixExport( const pe_bliss::section& oldText, const pe_bliss::sec
             continue;
 
         // Function inside old .text section
-        if (exp.get_rva() >= oldText.get_virtual_address() && exp.get_rva() <= oldText.get_virtual_address() + oldText.get_virtual_size())
+        if (exp.get_rva() >= oldText.get_virtual_address() && 
+             exp.get_rva() <= oldText.get_virtual_address() + oldText.get_virtual_size())
         {
             auto rva = exp.get_rva() - oldText.get_virtual_address();
             auto pData = _mutator.GetIdataByRVA( rva );
             if (pData)
+            {
+                //(uint32_t*)_image->section_data_from_rva(exp.)
                 exp.set_rva( pData->new_rva + newText.get_virtual_address() );
+            }
             else
                 assert( false && "Invalid export pointer" );
         }
     }
 
-    pe_bliss::rebuild_exports( *_image, info, exports, _image->section_from_directory( pe_bliss::pe_win::image_directory_entry_export ) );
+    pe_bliss::rebuild_exports( *_image, info, exports, _image->section_from_directory( pe_bliss::pe_win::image_directory_entry_export ), ofst );
 }
 
 /// <summary>
@@ -191,6 +367,9 @@ void PEMutator::FixSafeSEH( const pe_bliss::section& oldText, const pe_bliss::se
 
     auto cfg = pe_bliss::get_image_config( *_image );
     auto& handlers = cfg.get_se_handler_rvas();
+
+    if (handlers.empty())
+        return;
 
     for (size_t i = 0; i < handlers.size(); i++)
     {
@@ -209,39 +388,6 @@ void PEMutator::FixSafeSEH( const pe_bliss::section& oldText, const pe_bliss::se
 
     auto pSectionData = _image->section_data_from_va( cfg.get_se_handler_table_va() );
     memcpy( pSectionData, &handlers[0], handlers.size() * sizeof(handlers[0]) );
-}
-
-/// <summary>
-/// Fixes TLS callbacks
-/// </summary>
-/// <param name="oldText">Original .text section</param>
-/// <param name="newText">New .text section</param>
-void PEMutator::FixTLS( const pe_bliss::section& oldText, const pe_bliss::section& newText )
-{
-    if (!_image->has_tls())
-        return;
-
-    auto tls = pe_bliss::get_tls_info( *_image );
-    if (tls.get_callbacks_rva() == 0)
-        return;
-
-    auto pSectionData = _image->section_data_from_rva( tls.get_callbacks_rva() );
-    for (uint32_t* pCallback = (uint32_t*)pSectionData; *pCallback; pCallback++)
-    {
-        auto ptr = *pCallback - _image->get_image_base_32();
-
-        // Callback belongs to old .text section
-        if (ptr >= oldText.get_virtual_address() &&
-            ptr <= oldText.get_virtual_address() + oldText.get_virtual_size())
-        {
-            // New address
-            auto pData = _mutator.GetIdataByRVA( ptr - oldText.get_virtual_address() );
-            if (pData)
-                *pCallback = pData->new_rva + newText.get_virtual_address() + _image->get_image_base_32();
-            else
-                assert( false && "Invalid TLS callback" );
-        }
-    }
 }
 
 }
