@@ -153,6 +153,9 @@ const relocation_table_list get_relocations(const pe_base& pe, bool list_absolut
 
 		current_pos += reloc_table.SizeOfBlock;
 		read_size += reloc_table.SizeOfBlock;
+        if (read_size >= reloc_size)
+            break;
+
 		reloc_table = pe.section_data_from_rva<image_base_relocation>(current_pos, section_data_virtual, true);
 	}
 
