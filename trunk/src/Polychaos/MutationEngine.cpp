@@ -222,9 +222,12 @@ void MutationEngine::Disasm( size_t extBase, bool noep /*= false*/ )
                 // imm points to old .text section
                 imm = *(uint32_t*)&_ibuf[ip + data.imm_offset];
 
+                // Mark for analysis
                 if (imm >= extBase && imm < extBase + _size)
-                    // Mark for analysis
-                    _imap[imm - extBase] = NextIP;            
+                {
+                    if (_imap[imm - extBase] == Empty)
+                        _imap[imm - extBase] = NextIP;
+                }
                 else
                     imm = 0;
             }
