@@ -50,6 +50,20 @@ std::string PEMutator::Mutate( const std::string& filePath, std::string newPath 
     auto ep_rva = hasEP ? ep - oldText.get_virtual_address() : -1;
     uint8_t* obuf = nullptr;
 
+    // Expand relocations section if required
+    if (_image->has_reloc())
+    {
+        auto alignment = _image->get_file_alignment();
+        auto& relSec = _image->section_from_directory( pe_bliss::pe_win::image_directory_entry_basereloc );
+        auto spaceUsed = (relSec.get_virtual_size() + 1.0) / relSec.get_aligned_raw_size( alignment );
+
+        if (spaceUsed > 0.75)
+        {
+            relSec.get_raw_data().resize( relSec.get_aligned_raw_size( alignment ) + 3 * alignment );
+            relSec.set_size_of_raw_data( relSec.get_aligned_raw_size( alignment ) + 3 * alignment );
+        }
+    }
+
     auto& lastSec = _image->get_image_sections().back();
 
     // Set new section VA
@@ -67,7 +81,6 @@ std::string PEMutator::Mutate( const std::string& filePath, std::string newPath 
                                _image->get_image_base_32() + oldText.get_virtual_address(),
                                obuf );
 
-    // Update old code
     newText.set_raw_data( std::string( obuf, obuf + sz ) );
     secRef.set_name( ".pdata" );
 
@@ -99,6 +112,7 @@ std::string PEMutator::Mutate( const std::string& filePath, std::string newPath 
         }
     }
 
+    // Write new file
     std::ofstream new_file( newPath, std::ios::binary );
     if (!new_file.is_open())
         throw std::runtime_error( "Couldn't create output file: " + newPath );
@@ -119,83 +133,158 @@ size_t PEMutator::GetKnownFunctions( const pe_bliss::section& oldText, std::list
     uint32_t textStart = oldText.get_virtual_address() + _image->get_image_base_32();
     uint32_t textEnd = textStart + oldText.get_virtual_size();
 
-    //
     // Parse export
-    //
     if (_image->has_exports())
-    {
-        pe_bliss::export_info info;
-        auto exports = pe_bliss::get_exported_functions( *_image, info );
-        auto& expSec = _image->section_from_directory( pe_bliss::pe_win::image_directory_entry_export );
+        ParseExport( oldText, funcs );
 
-        for (auto& exp : exports)
+    // Parse TLS
+    if (_image->has_tls())
+        ParseTls( oldText, funcs );
+
+    // Parse SAFESEH
+    if (_image->has_config())
+        ParseSAFESEH( oldText, funcs );
+
+    // Use relocations to get code pointers
+    if (_image->has_reloc())
+        ParseRelocs( oldText, textStart, textEnd, funcs );
+    // Brute-force approach
+    else
+        ParseRawSections( textStart, textEnd, funcs );
+
+    return funcs.size();
+}
+
+
+/// <summary>
+/// Get functions form export directory
+/// </summary>
+/// <param name="oldText">Original code section</param>
+/// <param name="funcs">Found functions</param>
+void PEMutator::ParseExport( const pe_bliss::section &oldText, std::list<FuncData> &funcs )
+{
+    pe_bliss::export_info info;
+    auto exports = pe_bliss::get_exported_functions( *_image, info );
+    auto& expSec = _image->section_from_directory( pe_bliss::pe_win::image_directory_entry_export );
+
+    for (auto& exp : exports)
+    {
+        if (exp.is_forwarded())
+            continue;
+
+        // Function inside old .text section
+        if (exp.get_rva() >= oldText.get_virtual_address() && 
+             exp.get_rva() <= oldText.get_virtual_address() + oldText.get_virtual_size())
         {
-            if (exp.is_forwarded())
+            auto rva = exp.get_rva() - oldText.get_virtual_address();
+            funcs.emplace_back( FuncData( expSec.get_virtual_address(), 0xFFFFFFFF, rva ) );
+        }
+    }
+}
+
+/// <summary>
+/// Get functions form TLS callbacks table
+/// </summary>
+/// <param name="oldText">Original code section</param>
+/// <param name="funcs">Found functions</param>
+void PEMutator::ParseTls( const pe_bliss::section &oldText, std::list<FuncData> &funcs )
+{
+    auto tls = pe_bliss::get_tls_info( *_image );
+
+    if (tls.get_callbacks_rva() != 0)
+    {
+        auto& tlsSec = _image->section_from_rva( tls.get_callbacks_rva() );
+        auto pSectionData = _image->section_data_from_rva( tls.get_callbacks_rva() );
+
+        for (uint32_t* pCallback = (uint32_t*)pSectionData; *pCallback; pCallback++)
+        {
+            auto ptr = *pCallback - _image->get_image_base_32();
+
+            // Callback belongs to old .text section
+            if (ptr >= oldText.get_virtual_address() &&
+                 ptr <= oldText.get_virtual_address() + oldText.get_virtual_size())
+            {
+                auto rva = (const char*)pCallback - tlsSec.get_raw_data().c_str();
+                funcs.emplace_back( FuncData( tlsSec.get_virtual_address(), rva, ptr - oldText.get_virtual_address() ) );
+            }
+        }
+    }
+}
+
+/// <summary>
+/// Get functions form SAFESEH table
+/// </summary>
+/// <param name="oldText">Original code section</param>
+/// <param name="funcs">Found functions</param>
+void PEMutator::ParseSAFESEH( const pe_bliss::section &oldText, std::list<FuncData> &funcs )
+{
+    auto& cfgSec = _image->section_from_directory( pe_bliss::pe_win::image_directory_entry_load_config );
+    auto cfg = pe_bliss::get_image_config( *_image );
+    auto& handlers = cfg.get_se_handler_rvas();
+
+    for (size_t i = 0; i < handlers.size(); i++)
+    {
+        // Handler inside old section
+        if (handlers[i] >= oldText.get_virtual_address() &&
+             handlers[i] <= oldText.get_virtual_address() + oldText.get_virtual_size())
+        {
+            auto rva = handlers[i] - oldText.get_virtual_address();
+
+            // Exclude functions from generic fix
+            funcs.emplace_back( FuncData( cfgSec.get_virtual_address(), 0xFFFFFFFF, rva ) );
+        }
+    }
+}
+
+
+/// <summary>
+/// Get functions form relocations
+/// </summary>
+/// <param name="oldText">Original code section</param>
+/// <param name="textStart">Text section RVA + ImageBase</param>
+/// <param name="textEnd">textStart + text section size</param>
+/// <param name="funcs">Found functions</param>
+void PEMutator::ParseRelocs( const pe_bliss::section &oldText, 
+                             uint32_t textStart,
+                             uint32_t textEnd, 
+                             std::list<FuncData> &funcs )
+{
+    auto relocs = pe_bliss::get_relocations( *_image );
+
+    for (auto& relBlock : relocs)
+    {
+        // Exclude code section relocations
+        if (relBlock.get_rva() >= oldText.get_virtual_address() &&
+             relBlock.get_rva() < oldText.get_virtual_address() + oldText.get_virtual_size())
+             continue;
+
+        auto& sec = _image->section_from_rva( relBlock.get_rva() );
+        auto pData = (uint8_t*)sec.get_raw_data().data();
+        auto baseRVA = relBlock.get_rva() - sec.get_virtual_address();
+
+        for (auto& rel : relBlock.get_relocations())
+        {
+            auto rva = baseRVA + rel.get_rva();
+            if ((rva % 4))
                 continue;
 
-            // Function inside old .text section
-            if (exp.get_rva() >= oldText.get_virtual_address() && exp.get_rva() <= oldText.get_virtual_address() + oldText.get_virtual_size())
-            {
-                auto rva = exp.get_rva() - oldText.get_virtual_address();
-                funcs.emplace_back( FuncData( expSec.get_virtual_address(), -1, rva ) );
-            }
+            auto ptr = (uint32_t*)(pData + rva);
+
+            // Pointer belongs to code section
+            if (*ptr >= textStart &&  *ptr < textEnd)
+                funcs.emplace_back( FuncData( sec.get_virtual_address(), rva, *ptr - textStart ) );
         }
     }
+}
 
-    //
-    // Parse TLS
-    //
-    if (_image->has_tls())
-    {
-        auto tls = pe_bliss::get_tls_info( *_image );
-
-        if (tls.get_callbacks_rva() != 0)
-        {
-            auto& tlsSec = _image->section_from_rva( tls.get_callbacks_rva() );
-            auto pSectionData = _image->section_data_from_rva( tls.get_callbacks_rva() );
-            
-            for (uint32_t* pCallback = (uint32_t*)pSectionData; *pCallback; pCallback++)
-            {
-                auto ptr = *pCallback - _image->get_image_base_32();
-
-                // Callback belongs to old .text section
-                if (ptr >= oldText.get_virtual_address() &&
-                     ptr <= oldText.get_virtual_address() + oldText.get_virtual_size())
-                {
-                    auto rva = (const char*)pCallback - tlsSec.get_raw_data().c_str();
-                    funcs.emplace_back( FuncData( tlsSec.get_virtual_address(), rva,  ptr - oldText.get_virtual_address() ) );
-                }
-            }
-        }
-    }
-
-    //
-    // Parse SAFESEH
-    //
-    if (_image->has_config())
-    {
-        auto& cfgSec = _image->section_from_directory( pe_bliss::pe_win::image_directory_entry_load_config );
-        auto cfg = pe_bliss::get_image_config( *_image );
-        auto& handlers = cfg.get_se_handler_rvas();
-
-        for (size_t i = 0; i < handlers.size(); i++)
-        {
-            // Handler inside old section
-            if (handlers[i] >= oldText.get_virtual_address() &&
-                 handlers[i] <= oldText.get_virtual_address() + oldText.get_virtual_size())
-            {
-                auto rva = handlers[i] - oldText.get_virtual_address();
-
-                // Exclude functions from generic fix
-                funcs.emplace_back( FuncData( cfgSec.get_virtual_address(), -1, rva ) );
-            }
-        }
-    }
-
-    //
-    // Parse sections
-    //
-    
+/// <summary>
+/// Get functions from section data
+/// </summary>
+/// <param name="textStart">Text section RVA + ImageBase</param>
+/// <param name="textEnd">textStart + text section size</param>
+/// <param name="funcs">Found functions</param>
+void PEMutator::ParseRawSections( uint32_t textStart, uint32_t textEnd, std::list<FuncData> &funcs )
+{
     // Prepare exclusion regions
     std::list<std::pair<uint32_t, uint32_t>> rgns;
     for (auto i = pe_bliss::pe_win::image_directory_entry_export; i <= pe_bliss::pe_win::image_directory_entry_com_descriptor; i++)
@@ -214,7 +303,7 @@ size_t PEMutator::GetKnownFunctions( const pe_bliss::section& oldText, std::list
         {
             uint32_t* start = (uint32_t*)sec.get_raw_data().c_str();
             uint32_t* end = (uint32_t*)(sec.get_raw_data().c_str() + sec.get_raw_data().length());
-            
+
             for (uint32_t* ptr = start; ptr < end - 1; ptr++)
             {
                 // Exclude some PE metadata regions
@@ -227,9 +316,8 @@ size_t PEMutator::GetKnownFunctions( const pe_bliss::section& oldText, std::list
             }
         }
     }
-
-    return funcs.size();
 }
+
 
 /// <summary>
 /// Fix function returned by GetKnownFunctions
@@ -237,7 +325,7 @@ size_t PEMutator::GetKnownFunctions( const pe_bliss::section& oldText, std::list
 /// <param name="oldText">Original .text section</param>
 /// <param name="newText">New .text section</param>
 /// <param name="funcs">Function list</param>
-void PEMutator::FixKnownFunctions( const pe_bliss::section& oldText, 
+void PEMutator::FixKnownFunctions( const pe_bliss::section& /*oldText*/, 
                                    const pe_bliss::section& newText, 
                                    const std::list<FuncData>& funcs )
 {
@@ -326,7 +414,6 @@ void PEMutator::FixExport( const pe_bliss::section& oldText, const pe_bliss::sec
         return;
 
     pe_bliss::export_info info;
-    auto delta = newText.get_virtual_address() - oldText.get_virtual_address();
     auto exports = pe_bliss::get_exported_functions( *_image, info );
     auto ofst = _image->get_directory_rva( pe_bliss::pe_win::image_directory_entry_export )
               - _image->section_from_directory( pe_bliss::pe_win::image_directory_entry_export ).get_virtual_address();
@@ -343,10 +430,7 @@ void PEMutator::FixExport( const pe_bliss::section& oldText, const pe_bliss::sec
             auto rva = exp.get_rva() - oldText.get_virtual_address();
             auto pData = _mutator.GetIdataByRVA( rva );
             if (pData)
-            {
-                //(uint32_t*)_image->section_data_from_rva(exp.)
                 exp.set_rva( pData->new_rva + newText.get_virtual_address() );
-            }
             else
                 assert( false && "Invalid export pointer" );
         }

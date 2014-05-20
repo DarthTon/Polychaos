@@ -8,7 +8,6 @@
 namespace mut
 {
 
-
 class PEMutator
 {
 public:
@@ -31,6 +30,47 @@ private:
     /// <param name="funcs">Found functions</param>
     /// <returns>Function count</returns>
     size_t GetKnownFunctions( const pe_bliss::section& oldText, std::list<FuncData>& funcs );
+
+    /// <summary>
+    /// Get functions form export directory
+    /// </summary>
+    /// <param name="oldText">Original code section</param>
+    /// <param name="funcs">Found functions</param>
+    void ParseExport( const pe_bliss::section &oldText, std::list<FuncData> &funcs );
+
+    /// <summary>
+    /// Get functions form TLS callbacks table
+    /// </summary>
+    /// <param name="oldText">Original code section</param>
+    /// <param name="funcs">Found functions</param>
+    void ParseTls( const pe_bliss::section &oldText, std::list<FuncData> &funcs );
+
+    /// <summary>
+    /// Get functions form SAFESEH table
+    /// </summary>
+    /// <param name="oldText">Original code section</param>
+    /// <param name="funcs">Found functions</param>
+    void ParseSAFESEH( const pe_bliss::section &oldText, std::list<FuncData> &funcs );
+
+    /// <summary>
+    /// Get functions form relocations
+    /// </summary>
+    /// <param name="oldText">Original code section</param>
+    /// <param name="textStart">Text section RVA + ImageBase</param>
+    /// <param name="textEnd">textStart + text section size</param>
+    /// <param name="funcs">Found functions</param>
+    void ParseRelocs( const pe_bliss::section &oldText, 
+                      uint32_t textStart,
+                      uint32_t textEnd, 
+                      std::list<FuncData> &funcs );
+
+    /// <summary>
+    /// Get functions from section data
+    /// </summary>
+    /// <param name="textStart">Text section RVA + ImageBase</param>
+    /// <param name="textEnd">textStart + text section size</param>
+    /// <param name="funcs">Found functions</param>
+    void ParseRawSections( uint32_t textStart, uint32_t textEnd, std::list<FuncData> &funcs );
 
     /// <summary>
     /// Fix function returned by GetKnownFunctions
