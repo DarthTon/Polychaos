@@ -10,10 +10,10 @@ enum MutationFlags
     NoMutation  = 0x00, // don't modify anything
     SwitchJcc   = 0x01, // switch jcc execution branches
     Change      = 0x02, // substitute another instruction
-    Mix         = 0x04, // swap instructions
+    //Mix         = 0x04, // swap instructions, buggy
     AddTrash    = 0x08, // add trash instructions
 
-    MutateAll = SwitchJcc | Change | Mix | AddTrash,
+    MutateAll = SwitchJcc | Change /*| Mix*/ | AddTrash,
 };
 
 

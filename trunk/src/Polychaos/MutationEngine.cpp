@@ -120,10 +120,11 @@ size_t MutationEngine::Mutate( uint8_t* ptr, size_t size,
 #endif
 
     // Assemble
-    AssembleAndLink( rva_ep, extDelta, extBase );
+    size_t realSize = 0;
+    AssembleAndLink( rva_ep, extDelta, extBase, realSize );
     obuf = _obuf;
 
-    return _osize;
+    return realSize;
 }
 
 /// <summary>
@@ -456,7 +457,7 @@ size_t MutationEngine::Process( )
 /// <param name="rva_ep">New entry point address</param>
 /// <param name="extDelta">New code section address - old code section address</param>
 /// <param name="extBase">Image base + code section RVA</param>
-void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t extBase )
+void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t extBase, size_t& realSize )
 {
     uint32_t ip = 0;
     rva_ep = ip = 0;
@@ -580,6 +581,8 @@ void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t ex
             ip += sizeof(entry.first);
         }
     }
+
+    realSize = ip;
 
     //
     // Link

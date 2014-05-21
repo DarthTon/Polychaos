@@ -455,7 +455,7 @@ public: //IMAGE SECTIONS
 
 	//Adds section to image
 	//Returns last section
-	section& add_section(section s);
+	section& add_section(section s, bool autoupdate = true);
 	//Prepares section to later add it to image (checks and recalculates virtual and raw section size)
 	//Section must be prepared by this function before calling add_section
 	void prepare_section(section& s);
