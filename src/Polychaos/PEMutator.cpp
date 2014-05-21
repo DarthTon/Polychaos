@@ -46,32 +46,27 @@ std::string PEMutator::Mutate( const std::string& filePath, std::string newPath 
     auto& secRef = _image->section_from_rva( ep );
     auto oldText = secRef;
     auto newText = secRef;
+    pe_bliss::section relocSec;
+    std::list<FuncData> funcs;
 
     auto ep_rva = hasEP ? ep - oldText.get_virtual_address() : -1;
     uint8_t* obuf = nullptr;
 
-    // Expand relocations section if required
+    GetKnownFunctions( oldText, funcs );
+
+    // Strip relocations section if required
     if (_image->has_reloc())
     {
-        auto alignment = _image->get_file_alignment();
         auto& relSec = _image->section_from_directory( pe_bliss::pe_win::image_directory_entry_basereloc );
-        auto spaceUsed = (relSec.get_virtual_size() + 1.0) / relSec.get_aligned_raw_size( alignment );
-
-        if (spaceUsed > 0.75)
-        {
-            relSec.get_raw_data().resize( relSec.get_aligned_raw_size( alignment ) + 3 * alignment );
-            relSec.set_size_of_raw_data( relSec.get_aligned_raw_size( alignment ) + 3 * alignment );
-        }
+        relocSec = relSec;
+        _image->strip_section( relSec );
     }
 
     auto& lastSec = _image->get_image_sections().back();
 
     // Set new section VA
-    newText.set_virtual_address( lastSec.get_virtual_address() + 
+    newText.set_virtual_address( lastSec.get_virtual_address() +
                                  pe_bliss::pe_utils::align_up( lastSec.get_virtual_size(), _image->get_section_alignment() ) );
-
-    std::list<FuncData> funcs;
-    GetKnownFunctions( oldText, funcs );
 
     // Mutate code section
     auto delta = newText.get_virtual_address() - secRef.get_virtual_address();
@@ -85,6 +80,18 @@ std::string PEMutator::Mutate( const std::string& filePath, std::string newPath 
     secRef.set_name( ".pdata" );
 
     _image->add_section( newText );
+
+    // Restore reloc section
+    if (_image->has_reloc())
+    {
+        auto& lastSec = _image->get_image_sections().back();
+        relocSec.set_virtual_address( lastSec.get_virtual_address() +
+                                     pe_bliss::pe_utils::align_up( lastSec.get_virtual_size(), _image->get_section_alignment() ) );
+
+        _image->add_section( relocSec );
+        _image->set_directory_rva( pe_bliss::pe_win::image_directory_entry_basereloc, relocSec.get_virtual_address() );
+    }
+
     _image->set_base_of_code( newText.get_virtual_address() );
 
     if (hasEP)
@@ -399,7 +406,9 @@ void PEMutator::FixRelocs( const pe_bliss::section& oldText, const pe_bliss::sec
         relocs.back().add_relocation( pe_bliss::relocation_entry( rel.first & 0xFFF, rel.second ) );
     }
 
-    pe_bliss::rebuild_relocations( *_image, relocs, _image->section_from_directory( pe_bliss::pe_win::image_directory_entry_basereloc ) );
+    pe_bliss::rebuild_relocations( *_image, relocs, 
+                                   _image->get_image_sections().back()/*, 
+                                   0, true, false*/ );
 }
 
 /// <summary>
@@ -469,6 +478,8 @@ void PEMutator::FixSafeSEH( const pe_bliss::section& oldText, const pe_bliss::se
                 assert( false && "Invalid handler" );
         }
     }
+
+    std::sort( handlers.begin(), handlers.end() );
 
     auto pSectionData = _image->section_data_from_va( cfg.get_se_handler_table_va() );
     memcpy( pSectionData, &handlers[0], handlers.size() * sizeof(handlers[0]) );

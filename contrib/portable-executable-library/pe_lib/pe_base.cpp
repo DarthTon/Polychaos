@@ -473,7 +473,7 @@ void pe_base::prepare_section(section& s)
 }
 
 //Adds section to image
-section& pe_base::add_section(section s)
+section& pe_base::add_section(section s, bool autoupdate /*= true*/)
 {
 	if(sections_.size() >= maximum_number_of_sections)
 		throw pe_exception("Maximum number of sections has been reached", pe_exception::no_more_sections_can_be_added);
@@ -488,7 +488,9 @@ section& pe_base::add_section(section s)
 
 		//We should align last section raw size, if it wasn't aligned
 		section& last = sections_.back();
-		last.set_size_of_raw_data(static_cast<uint32_t>(pe_utils::align_up(last.get_raw_data().length(), get_file_alignment())));
+
+        if (autoupdate)
+		    last.set_size_of_raw_data(static_cast<uint32_t>(pe_utils::align_up(last.get_raw_data().length(), get_file_alignment())));
 	}
 	else
 	{
