@@ -105,10 +105,10 @@ bool MutationImpl::Mutate( InstructionData* root, int flags /*= NoFlags*/, void*
             if (entry->len == 1)
             {
                 // push reg
-                if ((entry->cmd[0] ^ 0x50) < 8)
+                /*if (entry->cmd[0] >= 0x50 && entry->cmd[0] < 0x58)
                     if (Utils::CheckProbability( 1.0 / 3 ))
                     {
-                        uint8_t rg = entry->cmd[0] ^ 0x50;
+                        uint8_t rg = entry->cmd[0] - 0x50;
 
                         // sub esp, 4
                         entry->cmd[0] = 0x83; entry->cmd[1] = 0xEC; entry->cmd[2] = 0x04;
@@ -119,10 +119,10 @@ bool MutationImpl::Mutate( InstructionData* root, int flags /*= NoFlags*/, void*
                     }
 
                 // pop reg
-                if ((entry->cmd[0] ^ 0x58) < 8)
+                if (entry->cmd[0] >= 0x58 && entry->cmd[0] < 0x5F)
                     if (Utils::CheckProbability( 1.0 / 3 ))
                     {
-                        uint8_t rg = entry->cmd[0] ^ 0x58;
+                        uint8_t rg = entry->cmd[0] - 0x58;
 
                         // mov reg, [esp]
                         entry->cmd[0] = 0x8B;  entry->cmd[1] = 0x04 + (rg << 3); entry->cmd[2] = 0x24;
@@ -130,17 +130,17 @@ bool MutationImpl::Mutate( InstructionData* root, int flags /*= NoFlags*/, void*
                         entry->cmd[3] = 0x83; entry->cmd[4] = 0xC4; entry->cmd[5] = 0x04;
 
                         entry->len = 6;
-                    }
+                    }*/
             }
         }
 
     }
 
-    if (flags & Mix)
+    /*if (flags & Mix)
     {
         for (auto *entry0 = root, *entry1 = entry0; entry0; entry1 = entry0, entry0 = entry0->next)
         {
-            /* ... h1 h0 ... */    
+            / * ... h1 h0 ... * /    
             // if h0->nxt is standard cmd
             if (!(entry1->flags & (Mutated | xRef)))
                 if (!(entry0->flags & (Mutated | Stop | xRef)))
@@ -175,7 +175,7 @@ bool MutationImpl::Mutate( InstructionData* root, int flags /*= NoFlags*/, void*
 
                     }
         }
-    }
+    }*/
 
     // Add trash
     if (flags & AddTrash)

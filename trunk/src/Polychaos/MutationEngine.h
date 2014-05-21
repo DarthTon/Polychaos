@@ -95,7 +95,7 @@ private:
     /// <param name="rva_ep">New entry point address</param>
     /// <param name="extDelta">New code section address - old code section address</param>
     /// <param name="extBase">Image base + code section RVA</param>
-    void AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t extBase );
+    void AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t extBase, size_t& realSize );
 
     /// <summary>
     /// Reset internal buffers
