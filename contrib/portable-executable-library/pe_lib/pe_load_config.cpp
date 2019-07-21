@@ -345,8 +345,14 @@ const image_config_info get_image_config_base(const pe_base& pe)
 	//Get load config structure
 	typename PEClassType::ConfigStruct config_info = pe.section_data_from_rva<typename PEClassType::ConfigStruct>(pe.get_directory_rva(image_directory_entry_load_config), section_data_virtual);
 
+	printf("MaximumAllocationSize = %d \n", config_info.MaximumAllocationSize);
+	printf("config_info.MajorVersion = %d \n", config_info.MinorVersion);
+
+	printf("config_info.Size = %d \n", config_info.Size);
+	printf("SIZEOF = %d \n", sizeof(config_info));
+
 	//Check size of config directory
-	if(config_info.Size != sizeof(config_info))
+	if (0) //(config_info.Size != sizeof(config_info))
 		throw pe_exception("Incorrect (or old) load config directory", pe_exception::incorrect_config_directory);
 
 	//Fill return structure
@@ -390,22 +396,22 @@ const image_directory rebuild_image_config_base(pe_base& pe, const image_config_
 	//Check that image_config_section is attached to this PE image
 	if(!pe.section_attached(image_config_section))
 		throw pe_exception("Image Config section must be attached to PE file", pe_exception::section_is_not_attached);
-	
+
 	uint32_t alignment = pe_utils::align_up(offset_from_section_start, sizeof(typename PEClassType::BaseSize)) - offset_from_section_start;
 
 	uint32_t needed_size = sizeof(typename PEClassType::ConfigStruct); //Calculate needed size for Image Config table
-	
+
 	uint32_t image_config_data_pos = offset_from_section_start + alignment;
 
 	uint32_t current_pos_of_se_handlers = 0;
 	uint32_t current_pos_of_lock_prefixes = 0;
-	
+
 	if(write_se_handlers)
 	{
 		current_pos_of_se_handlers = needed_size + image_config_data_pos;
 		needed_size += static_cast<uint32_t>(info.get_se_handler_rvas().size()) * sizeof(uint32_t); //RVAs of SE Handlers
 	}
-	
+
 	if(write_lock_prefixes)
 	{
 		current_pos_of_lock_prefixes = needed_size + image_config_data_pos;
@@ -413,7 +419,7 @@ const image_directory rebuild_image_config_base(pe_base& pe, const image_config_
 	}
 
 	//Check if image_config_section is last one. If it's not, check if there's enough place for Image Config data
-	if(&image_config_section != &*(pe.get_image_sections().end() - 1) && 
+	if(&image_config_section != &*(pe.get_image_sections().end() - 1) &&
 		(image_config_section.empty() || pe_utils::align_up(image_config_section.get_size_of_raw_data(), pe.get_file_alignment()) < needed_size + image_config_data_pos))
 		throw pe_exception("Insufficient space for TLS directory", pe_exception::insufficient_space);
 
@@ -442,7 +448,7 @@ const image_directory rebuild_image_config_base(pe_base& pe, const image_config_
 	image_config_section_struct.EditList = static_cast<typename PEClassType::BaseSize>(info.get_edit_list_va());
 	image_config_section_struct.SecurityCookie = static_cast<typename PEClassType::BaseSize>(info.get_security_cookie_va());
 	image_config_section_struct.SEHandlerCount = static_cast<typename PEClassType::BaseSize>(info.get_se_handler_rvas().size());
-	
+
 
 	if(write_se_handlers)
 	{

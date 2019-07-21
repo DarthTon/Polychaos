@@ -12,7 +12,7 @@
 #define SPACE_END       128
 
 // try to find new ip NTRY times
-#define NTRY  1000 
+#define NTRY  1000
 
 //#define NO_MUTATION
 //#define NO_RANDOMIZE
@@ -61,7 +61,7 @@ void MutationEngine::Reset()
 
 /// <summary>
 /// Mutate provided code
-/// Every single byte inside buffer is treated as code. 
+/// Every single byte inside buffer is treated as code.
 /// So any data mixed with code will corrupt code graph
 /// </summary>
 /// <param name="ptr">Code ptr.</param>
@@ -71,7 +71,7 @@ void MutationEngine::Reset()
 /// <param name="extBase">Image base + code section RVA</param>
 /// <param name="obuf">Output buffer</param>
 /// <returns>Output buffer size</returns>
-size_t MutationEngine::Mutate( uint8_t* ptr, size_t size, 
+size_t MutationEngine::Mutate( uint8_t* ptr, size_t size,
                                size_t& rva_ep, size_t extDelta,
                                const std::list<FuncData>& knownFuncs,
                                size_t extBase, uint8_t*& obuf )
@@ -110,7 +110,7 @@ size_t MutationEngine::Mutate( uint8_t* ptr, size_t size,
         _imap[func.ptr] = NextIP;
 
     // Prepare code graph
-    Disasm( extBase, rva_ep == -1 );
+    Disasm( extBase, 0 );
     Process( );
 
 #ifndef NO_MUTATION
@@ -121,7 +121,9 @@ size_t MutationEngine::Mutate( uint8_t* ptr, size_t size,
 
     // Assemble
     size_t realSize = 0;
+	printf("LINE = %d \n",__LINE__);
     AssembleAndLink( rva_ep, extDelta, extBase, realSize );
+	printf("LINE = %d \n", __LINE__);
     obuf = _obuf;
 
     return realSize;
@@ -282,7 +284,7 @@ void MutationEngine::Disasm( size_t extBase, bool noep /*= false*/ )
                 (*pEntry)->flags |= xRef;
 
             if (rel != -1)
-            {         
+            {
                 (*pEntry)->flags |= HaveRel | ExtRel;
 
                 // Determine if relative instruction lies within buffer
@@ -390,23 +392,23 @@ size_t MutationEngine::Process( )
         uint8_t opcode1 = entry->cmd[0];
 
         // short jcc
-        if ((opcode1 & 0xF0) == 0x70)                 
+        if ((opcode1 & 0xF0) == 0x70)
         {
             entry->cmd[0] = 0x0F;
             entry->cmd[1] = 0xF0 ^ opcode1;     // -> near (70-->80)
             entry->len = 6;
         }
-        // short jmp 
-        if (opcode1 == 0xEB) 
+        // short jmp
+        if (opcode1 == 0xEB)
         {
             entry->cmd[0] = 0xE9;               // -> near
             entry->len = 5;
         }
         // loop / z / nz, jcxz
-        if ((opcode1 & 0xFC) == 0xE0)  
+        if ((opcode1 & 0xFC) == 0xE0)
         {
             // loop
-            if (opcode1 == 0xE2)                      
+            if (opcode1 == 0xE2)
             {
                 entry->cmd[0] = 0x49;                   // dec ecx
                 *(uint16_t*)&entry->cmd[1] = 0x850F;    // jnz near ...
@@ -420,7 +422,7 @@ size_t MutationEngine::Process( )
                 entry->len = 1 + 6;
             }
             // jcxz
-            else if (opcode1 == 0xE3)                      
+            else if (opcode1 == 0xE3)
             {
                 *(uint16_t*)&entry->cmd[0] = 0xC909;      // or ecx, ecx
                 *(uint16_t*)&entry->cmd[2] = 0x840F;      // jz near ...
@@ -467,6 +469,7 @@ void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t ex
     rva_ep = ip = SPACE_START + Utils::GetRandomInt( 0, _osize - SPACE_START - SPACE_END );
 #endif
 #endif
+	printf("***LINE = %d \n", __LINE__);
 
     //
     // Assemble
@@ -479,9 +482,10 @@ void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t ex
             for (auto entry = topentry; entry; entry = entry->nxt)
             {
 #ifndef NO_MUTATION
+				printf("***entry = %x \n", entry);
 #ifndef NO_RANDOMIZE
                 // calculate space available
-                int i;                                  
+                int i;
                 for (i = 0; (i < SPACE_BETWEEN) && (ip + i < _osize - SPACE_END); i++)
                     if (_omap[ip + i])
                         break;
@@ -492,7 +496,7 @@ void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t ex
                     uint32_t newip;
                     int ntry = 0;
 
-                    do 
+                    do
                     {
                         if (ntry++ > NTRY)
                             throw(std::runtime_error( "Couldn't find suitable place for code" ));
@@ -515,6 +519,7 @@ void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t ex
                     *(uint32_t*)&_obuf[ip - 4] = newip - ip;
                     ip = newip;
                 };
+				printf("***LINE = %d \n", __LINE__);
 #endif // NO_RANDOMIZE
 #endif // NO_MUTATION
                 if (entry->flags & Assembled)
@@ -561,7 +566,7 @@ void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t ex
 
     ip = nip + 1;
 #endif // !NO_MUTATION
-
+	printf("***LINE = %d \n", __LINE__);
 
     // Align address
     ip = ip % 4 ? (((ip >> 2) + 1) << 2) : ip;
@@ -583,6 +588,8 @@ void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t ex
     }
 
     realSize = ip;
+
+	printf("***LINE = %d \n", __LINE__);
 
     //
     // Link
@@ -618,7 +625,7 @@ void MutationEngine::AssembleAndLink( size_t &rva_ep, size_t extDelta, size_t ex
             // Search jump tables
             else
             {
-                auto iter = std::find_if( _jumpFixups.begin(), _jumpFixups.end(), 
+                auto iter = std::find_if( _jumpFixups.begin(), _jumpFixups.end(),
                                           [rva]( const std::pair<uint32_t, DataEntry>& de ) { return rva == de.second.old_rva; } );
 
                 if (iter != _jumpFixups.end())

@@ -99,10 +99,10 @@ std::string PEMutator::Mutate( const std::string& filePath, std::string newPath 
 
     // Perform PE fixups
     FixKnownFunctions( oldText, newText, funcs );
-    FixSafeSEH( oldText, newText );
+    //FixSafeSEH( oldText, newText );
     FixExport( oldText, newText );
     FixRelocs( oldText, newText );
-    
+
     // Build new name
     if (newPath.empty())
     {
@@ -180,7 +180,7 @@ void PEMutator::ParseExport( const pe_bliss::section &oldText, std::list<FuncDat
             continue;
 
         // Function inside old .text section
-        if (exp.get_rva() >= oldText.get_virtual_address() && 
+        if (exp.get_rva() >= oldText.get_virtual_address() &&
              exp.get_rva() <= oldText.get_virtual_address() + oldText.get_virtual_size())
         {
             auto rva = exp.get_rva() - oldText.get_virtual_address();
@@ -251,9 +251,9 @@ void PEMutator::ParseSAFESEH( const pe_bliss::section &oldText, std::list<FuncDa
 /// <param name="textStart">Text section RVA + ImageBase</param>
 /// <param name="textEnd">textStart + text section size</param>
 /// <param name="funcs">Found functions</param>
-void PEMutator::ParseRelocs( const pe_bliss::section &oldText, 
+void PEMutator::ParseRelocs( const pe_bliss::section &oldText,
                              uint32_t textStart,
-                             uint32_t textEnd, 
+                             uint32_t textEnd,
                              std::list<FuncData> &funcs )
 {
     auto relocs = pe_bliss::get_relocations( *_image );
@@ -332,8 +332,8 @@ void PEMutator::ParseRawSections( uint32_t textStart, uint32_t textEnd, std::lis
 /// <param name="oldText">Original .text section</param>
 /// <param name="newText">New .text section</param>
 /// <param name="funcs">Function list</param>
-void PEMutator::FixKnownFunctions( const pe_bliss::section& /*oldText*/, 
-                                   const pe_bliss::section& newText, 
+void PEMutator::FixKnownFunctions( const pe_bliss::section& /*oldText*/,
+                                   const pe_bliss::section& newText,
                                    const std::list<FuncData>& funcs )
 {
     for (auto& func : funcs)
@@ -406,8 +406,8 @@ void PEMutator::FixRelocs( const pe_bliss::section& oldText, const pe_bliss::sec
         relocs.back().add_relocation( pe_bliss::relocation_entry( rel.first & 0xFFF, rel.second ) );
     }
 
-    pe_bliss::rebuild_relocations( *_image, relocs, 
-                                   _image->get_image_sections().back()/*, 
+    pe_bliss::rebuild_relocations( *_image, relocs,
+                                   _image->get_image_sections().back()/*,
                                    0, true, false*/ );
 }
 
@@ -433,7 +433,7 @@ void PEMutator::FixExport( const pe_bliss::section& oldText, const pe_bliss::sec
             continue;
 
         // Function inside old .text section
-        if (exp.get_rva() >= oldText.get_virtual_address() && 
+        if (exp.get_rva() >= oldText.get_virtual_address() &&
              exp.get_rva() <= oldText.get_virtual_address() + oldText.get_virtual_size())
         {
             auto rva = exp.get_rva() - oldText.get_virtual_address();
