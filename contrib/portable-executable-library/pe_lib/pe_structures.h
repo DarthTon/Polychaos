@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <windows.h>
 #include <sstream>
 #include "stdint_defs.h"
 #if defined(_MSC_VER)
@@ -595,7 +596,7 @@ struct image_thunk_data64
 {
 	union
 	{
-		uint64_t ForwarderString;  // PBYTE 
+		uint64_t ForwarderString;  // PBYTE
 		uint64_t Function;         // PDWORD
 		uint64_t Ordinal;
 		uint64_t AddressOfData;    // PIMAGE_IMPORT_BY_NAME
@@ -607,7 +608,7 @@ struct image_thunk_data32
 {
 	union
 	{
-		uint32_t ForwarderString;      // PBYTE 
+		uint32_t ForwarderString;      // PBYTE
 		uint32_t Function;             // PDWORD
 		uint32_t Ordinal;
 		uint32_t AddressOfData;        // PIMAGE_IMPORT_BY_NAME
@@ -944,29 +945,59 @@ enum replaces_cor_hdr_numeric_defines
 };
 
 /// Load Configuration Directory Entry ///
+ typedef struct _IMAGE_LOAD_CONFIG_CODE_INTEGRITY {
+	WORD    Flags;          // Flags to indicate if CI information is available, etc.
+	WORD    Catalog;        // 0xFFFF means not available
+	DWORD   CatalogOffset;
+	DWORD   Reserved;       // Additional bitmask to be defined later
+} IMAGE_LOAD_CONFIG_CODE_INTEGRITY, *PIMAGE_LOAD_CONFIG_CODE_INTEGRITY;
+
 struct image_load_config_directory32
 {
-	uint32_t Size;
-	uint32_t TimeDateStamp;
-	uint16_t MajorVersion;
-	uint16_t MinorVersion;
-	uint32_t GlobalFlagsClear;
-	uint32_t GlobalFlagsSet;
-	uint32_t CriticalSectionDefaultTimeout;
-	uint32_t DeCommitFreeBlockThreshold;
-	uint32_t DeCommitTotalFreeThreshold;
-	uint32_t LockPrefixTable;            // VA
-	uint32_t MaximumAllocationSize;
-	uint32_t VirtualMemoryThreshold;
-	uint32_t ProcessHeapFlags;
-	uint32_t ProcessAffinityMask;
-	uint16_t CSDVersion;
-	uint16_t Reserved1;
-	uint32_t EditList;                   // VA
-	uint32_t SecurityCookie;             // VA
-	uint32_t SEHandlerTable;             // VA
-	uint32_t SEHandlerCount;
+	DWORD                            Size;
+	DWORD                            TimeDateStamp;
+	WORD                             MajorVersion;
+	WORD                             MinorVersion;
+	DWORD                            GlobalFlagsClear;
+	DWORD                            GlobalFlagsSet;
+	DWORD                            CriticalSectionDefaultTimeout;
+	DWORD                            DeCommitFreeBlockThreshold;
+	DWORD                            DeCommitTotalFreeThreshold;
+	DWORD                            LockPrefixTable;
+	DWORD                            MaximumAllocationSize;
+	DWORD                            VirtualMemoryThreshold;
+	DWORD                            ProcessHeapFlags;
+	DWORD                            ProcessAffinityMask;
+	WORD                             CSDVersion;
+	WORD                             DependentLoadFlags;
+	DWORD                            EditList;
+	DWORD                            SecurityCookie;
+	DWORD                            SEHandlerTable;
+	DWORD                            SEHandlerCount;
+	DWORD                            GuardCFCheckFunctionPointer;
+	DWORD                            GuardCFDispatchFunctionPointer;
+	DWORD                            GuardCFFunctionTable;
+	DWORD                            GuardCFFunctionCount;
+	DWORD                            GuardFlags;
+	IMAGE_LOAD_CONFIG_CODE_INTEGRITY CodeIntegrity;
+	DWORD                            GuardAddressTakenIatEntryTable;
+	DWORD                            GuardAddressTakenIatEntryCount;
+	DWORD                            GuardLongJumpTargetTable;
+	DWORD                            GuardLongJumpTargetCount;
+	DWORD                            DynamicValueRelocTable;
+	DWORD                            CHPEMetadataPointer;
+	DWORD                            GuardRFFailureRoutine;
+	DWORD                            GuardRFFailureRoutineFunctionPointer;
+	DWORD                            DynamicValueRelocTableOffset;
+	WORD                             DynamicValueRelocTableSection;
+	WORD                             Reserved2;
+	DWORD                            GuardRFVerifyStackPointerFunctionPointer;
+	DWORD                            HotPatchTableOffset;
+	DWORD                            Reserved3;
+	DWORD                            EnclaveConfigurationPointer;
+	DWORD                            VolatileMetadataPointer;
 };
+
 
 struct image_load_config_directory64
 {

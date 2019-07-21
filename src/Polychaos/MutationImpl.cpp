@@ -24,6 +24,7 @@ MutationImpl::~MutationImpl()
 /// <returns>true on success</returns>
 bool MutationImpl::Mutate( InstructionData* root, int flags /*= NoFlags*/, void* /*context*/ /*= nullptr*/ )
 {
+	printf("MUTATE_START \n");
     // Switch jcc
     if (flags & SwitchJcc)
     {
@@ -41,7 +42,7 @@ bool MutationImpl::Mutate( InstructionData* root, int flags /*= NoFlags*/, void*
 
     if (flags & Change)
     {
-        for (auto* entry = root; entry; entry = entry->next) 
+        for (auto* entry = root; entry; entry = entry->next)
         {
             if (entry->len == 2)
             {
@@ -140,7 +141,7 @@ bool MutationImpl::Mutate( InstructionData* root, int flags /*= NoFlags*/, void*
     {
         for (auto *entry0 = root, *entry1 = entry0; entry0; entry1 = entry0, entry0 = entry0->next)
         {
-            / * ... h1 h0 ... * /    
+            / * ... h1 h0 ... * /
             // if h0->nxt is standard cmd
             if (!(entry1->flags & (Mutated | xRef)))
                 if (!(entry0->flags & (Mutated | Stop | xRef)))
@@ -157,7 +158,7 @@ bool MutationImpl::Mutate( InstructionData* root, int flags /*= NoFlags*/, void*
                                             if (Utils::CheckProbability( 1.0 / 3 ))
                                             {
                                                 // swap opcodes
-                                                for (int i = 0; i < 15; i++) 
+                                                for (int i = 0; i < 15; i++)
                                                 {
                                                     entry0->cmd[i] ^= entry1->cmd[i];
                                                     entry1->cmd[i] ^= entry0->cmd[i];
@@ -165,7 +166,7 @@ bool MutationImpl::Mutate( InstructionData* root, int flags /*= NoFlags*/, void*
                                                 }
 
                                                 // swap lengths
-                                                entry0->len ^= entry1->len;               
+                                                entry0->len ^= entry1->len;
                                                 entry1->len ^= entry0->len;
                                                 entry0->len ^= entry1->len;
 
@@ -198,6 +199,7 @@ bool MutationImpl::Mutate( InstructionData* root, int flags /*= NoFlags*/, void*
                 }
         }
     }
+	printf("MUTATE_END \n");
 
     return true;
 }
@@ -225,12 +227,12 @@ int MutationImpl::GetArgs( uint8_t* instr, int* arg1, int* arg2, int len )
                     *arg2 = instr[1] & 7;
 
                     // swap
-                    if (instr[0] & 2) 
-                    { 
-                        *arg1 ^= *arg2; 
-                        *arg2 ^= *arg1; 
+                    if (instr[0] & 2)
+                    {
                         *arg1 ^= *arg2;
-                    }; 
+                        *arg2 ^= *arg1;
+                        *arg1 ^= *arg2;
+                    };
 
                     return 1;
                 }
